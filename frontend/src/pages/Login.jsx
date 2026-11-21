@@ -85,7 +85,6 @@ export default function Login() {
               <input
                 id="login-email"
                 type="email"
-                placeholder="you@example.com"
                 autoComplete="email"
                 required
                 value={email}
@@ -102,7 +101,6 @@ export default function Login() {
                 <input
                   id="login-password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
                   autoComplete="current-password"
                   required
                   value={password}

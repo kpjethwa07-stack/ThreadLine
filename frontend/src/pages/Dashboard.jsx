@@ -1,255 +1,539 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  FolderKanban,
-  ClipboardList,
-  CheckCircle2,
-  ArrowUpRight,
-  Layers3,
-  CircleDot,
+  ArrowRight,
+  Plus,
   Activity,
+  FolderKanban,
+  ListTodo,
 } from "lucide-react";
-
 import api from "../services/api";
-import Button from "../components/Button";
 import "./Dashboard.css";
+
+const STATUSES = ["Open", "In Progress", "Resolved", "Closed"];
+const PRIORITIES = ["Low", "Medium", "High"];
+
+function getProjectId(issue) {
+  const project = issue.projectId || issue.project;
+  return typeof project === "object" ? project?._id : project || "";
+}
+
+function getAssignee(issue) {
+  const person = issue.assignee || issue.assignedTo;
+
+  if (!person) return "Unassigned";
+  if (typeof person === "string") return person;
+
+  return (
+    person.name ||
+    person.fullName ||
+    person.username ||
+    person.email ||
+    "Unassigned"
+  );
+}
+
+function getDate(item) {
+  const value = item.updatedAt || item.createdAt;
+  return value ? new Date(value) : null;
+}
+
+function formatDate(date) {
+  if (!date || Number.isNaN(date.getTime())) return "Recently";
+
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function getStatusClass(status = "") {
+  return status.toLowerCase().replace(/\s+/g, "-");
+}
+
+function getPriorityClass(priority = "Medium") {
+  const value = priority.toLowerCase();
+
+  if (value === "low") return "priority-text-low";
+  if (value === "medium") return "priority-text-medium";
+
+  // High and Critical use the high-priority appearance.
+  return "priority-text-high";
+}
 
 export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
 
   useEffect(() => {
-    const load = async () => {
+    let cancelled = false;
+
+    async function loadDashboard() {
       try {
-        const response = await api.get("/projects");
-        const projectList = response.data.projects || [];
+        setError("");
 
-        setProjects(projectList);
+        const projectRes = await api.get("/projects");
+        const projectData =
+          projectRes.data.projects || projectRes.data || [];
 
-        const issueResponses = await Promise.all(
-          projectList.map((project) =>
+        const issueResults = await Promise.all(
+          projectData.map((project) =>
             api.get(`/issues/project/${project._id}`)
           )
         );
 
-        setIssues(
-          issueResponses.flatMap((item) => item.data.issues || [])
-        );
-      } catch (err) {
-        setError(
-          err.response?.data?.message || "Unable to load dashboard."
-        );
-      } finally {
-        setLoading(false);
-      }
-    };
+        const allIssues = issueResults.flatMap((response) => {
+          return response.data.issues || response.data || [];
+        });
 
-    load();
+        if (!cancelled) {
+          setProjects(projectData);
+          setIssues(allIssues);
+        }
+      } catch (err) {
+        console.error("Dashboard error:", err);
+
+        if (!cancelled) {
+          setError("Unable to load your workspace data. Please refresh.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const totalIssues = issues.length;
-  const completed = issues.filter(
-    (issue) => issue.status === "Done"
-  ).length;
-  const progress = totalIssues
-    ? Math.round((completed / totalIssues) * 100)
-    : 0;
 
-  const recentIssues = [...issues]
-    .sort(
-      (a, b) =>
-        new Date(b.updatedAt || b.createdAt || 0) -
-        new Date(a.updatedAt || a.createdAt || 0)
-    )
-    .slice(0, 5);
+  const openIssues = issues.filter(
+    (issue) => issue.status === "Open"
+  ).length;
+
+  const inProgress = issues.filter(
+    (issue) => issue.status === "In Progress"
+  ).length;
+
+  const completed = issues.filter(
+    (issue) =>
+      issue.status === "Resolved" || issue.status === "Closed"
+  ).length;
+
+  const filteredIssues = useMemo(() => {
+    return [...issues]
+      .filter((issue) => {
+        return (
+          statusFilter === "All" ||
+          issue.status === statusFilter
+        );
+      })
+      .sort((a, b) => {
+        return (
+          (getDate(b)?.getTime() || 0) -
+          (getDate(a)?.getTime() || 0)
+        );
+      });
+  }, [issues, statusFilter]);
+
+  const recentActivity = useMemo(() => {
+    const issueActivity = issues.map((issue) => ({
+      id: `issue-${issue._id}`,
+      title: issue.title || "Untitled issue",
+      detail: `${issue.status || "Open"} · ${
+        issue.priority || "No priority"
+      } priority`,
+      date: getDate(issue),
+      type: "issue",
+    }));
+
+    const projectActivity = projects.map((project) => ({
+      id: `project-${project._id}`,
+      title: project.name || "Untitled project",
+      detail: "Project updated",
+      date: getDate(project),
+      type: "project",
+    }));
+
+    return [...issueActivity, ...projectActivity]
+      .sort(
+        (a, b) =>
+          (b.date?.getTime() || 0) -
+          (a.date?.getTime() || 0)
+      )
+      .slice(0, 5);
+  }, [issues, projects]);
+
+  const projectProgress = useMemo(() => {
+    return projects.map((project) => {
+      const relatedIssues = issues.filter(
+        (issue) => getProjectId(issue) === project._id
+      );
+
+      const done = relatedIssues.filter(
+        (issue) =>
+          issue.status === "Resolved" ||
+          issue.status === "Closed"
+      ).length;
+
+      const percent = relatedIssues.length
+        ? Math.round((done / relatedIssues.length) * 100)
+        : 0;
+
+      return {
+        ...project,
+        issueCount: relatedIssues.length,
+        completedCount: done,
+        percent,
+      };
+    });
+  }, [projects, issues]);
+
+  // UI-only quick controls: update the displayed state immediately.
+  function updateIssueLocally(issueId, field, value) {
+    setIssues((current) =>
+      current.map((issue) =>
+        issue._id === issueId
+          ? { ...issue, [field]: value }
+          : issue
+      )
+    );
+  }
 
   if (loading) {
     return (
-      <div className="dashboard">
-        <div className="dashboard-hero">
-          <span className="hero-label">ISSUEFLOW / OVERVIEW</span>
-          <h2>Your workspace, at a glance.</h2>
-          <p>Preparing your project insights...</p>
-        </div>
-        <div className="dashboard-loading">Loading dashboard...</div>
+      <div className="dashboard-loading">
+        Loading your workspace...
       </div>
     );
   }
 
   return (
     <div className="dashboard">
-      <section className="dashboard-hero">
-        <div className="hero-content">
-          <span className="hero-label">ISSUEFLOW / OVERVIEW</span>
-          <h2>
-            Your workspace,
-            <br />
-            <span>at a glance.</span>
-          </h2>
-          <p>
-            Keep your projects organized, track issues, and see
-            progress across your workspace.
-          </p>
-
-          <Link to="/projects" className="hero-action">
-            Explore projects <ArrowUpRight size={17} />
-          </Link>
-        </div>
-
-        <div className="hero-art" aria-hidden="true">
-          <div className="hero-art-ring ring-one" />
-          <div className="hero-art-ring ring-two" />
-          <div className="hero-art-center">
-            <Layers3 size={48} />
-          </div>
-        </div>
-      </section>
-
       {error && <div className="dashboard-error">{error}</div>}
 
-      <section className="metric-grid">
-        <article className="metric-card metric-indigo">
-          <div className="metric-top">
-            <span>Total Projects</span>
-            <div className="metric-icon"><FolderKanban size={20} /></div>
-          </div>
-          <strong>{projects.length}</strong>
-          <small>Projects in your workspace</small>
-        </article>
+      {/* HERO */}
+      <section className="dashboard-heading">
+        <div>
+          <span className="heading-kicker">YOUR WORKSPACE</span>
+          <h2>Good to see you again.</h2>
+          <p>
+            Here's what's happening across your projects today.
+          </p>
+        </div>
 
-        <article className="metric-card metric-cyan">
-          <div className="metric-top">
-            <span>Total Issues</span>
-            <div className="metric-icon"><ClipboardList size={20} /></div>
-          </div>
-          <strong>{totalIssues}</strong>
-          <small>Issues across all projects</small>
-        </article>
+        <div className="dashboard-actions">
+          <Link to="/projects" className="dashboard-create-link">
+            <Plus size={15} />
+            Explore projects
+          </Link>
 
-        <article className="metric-card metric-rose">
-          <div className="metric-top">
-            <span>Completion</span>
-            <div className="metric-icon"><CheckCircle2 size={20} /></div>
-          </div>
-          <strong>{progress}%</strong>
-          <small>{completed} of {totalIssues} completed</small>
-          <div className="metric-progress">
-            <div style={{ width: `${progress}%` }} />
-          </div>
-        </article>
+          <Link to="/search" className="dashboard-secondary-link">
+            View issues
+            <ArrowRight size={14} />
+          </Link>
+        </div>
       </section>
 
-      <section className="dashboard-section">
-        <div className="section-heading">
-          <div>
-            <h2>Workspace activity</h2>
-            <p>Your projects and recent issues</p>
+      {/* STATS */}
+      <section className="dashboard-stats">
+        <div className="dashboard-stat">
+          <span className="stat-label">Open issues</span>
+          <strong>{openIssues}</strong>
+          <small>Awaiting attention</small>
+        </div>
+
+        <div className="dashboard-stat">
+          <span className="stat-label">In progress</span>
+          <strong>{inProgress}</strong>
+          <small>Currently being worked on</small>
+        </div>
+
+        <div className="dashboard-stat">
+          <span className="stat-label">Completed</span>
+          <strong>{completed}</strong>
+          <small>Resolved or closed</small>
+        </div>
+
+        <div className="dashboard-stat">
+          <span className="stat-label">Projects</span>
+          <strong>{projects.length}</strong>
+          <small>In your workspace</small>
+        </div>
+      </section>
+
+      {/* MAIN CONTENT */}
+      <section className="dashboard-grid">
+        {/* ISSUES */}
+        <div className="dashboard-panel issues-panel">
+          <div className="panel-head">
+            <div>
+              <h3>Issues overview</h3>
+              <p>Track and manage your latest issues</p>
+            </div>
+
+            <Link to="/search" className="panel-link">
+              View all <ArrowRight size={14} />
+            </Link>
+          </div>
+
+          <div className="filter-row">
+            <span>RECENT ISSUES</span>
+
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(event.target.value)
+              }
+              aria-label="Filter issues by status"
+            >
+              <option value="All">All statuses</option>
+              {STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="table-scroll">
+            <table className="issue-table">
+              <thead>
+                <tr>
+                  <th>Issue</th>
+                  <th>Project</th>
+                  <th>Status</th>
+                  <th>Assignee</th>
+                  <th>Priority</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredIssues.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="table-empty">
+                      <div className="filtered-empty">
+                        <span>
+                          {statusFilter === "All"
+                            ? "No issues found yet."
+                            : `No ${statusFilter.toLowerCase()} issues found.`}
+                        </span>
+
+                        {statusFilter !== "All" && (
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilter("All")}
+                          >
+                            Clear filter
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredIssues.slice(0, 8).map((issue) => {
+                    const project = projects.find(
+                      (item) => item._id === getProjectId(issue)
+                    );
+
+                    const priority = issue.priority || "Medium";
+
+                    return (
+                      <tr key={issue._id}>
+                        <td>
+                          <span className="issue-title">
+                            {issue.title || "Untitled issue"}
+                          </span>
+                          <span className="issue-id">
+                            #{String(issue._id).slice(-6)}
+                          </span>
+                        </td>
+
+                        <td>{project?.name || "—"}</td>
+
+                        <td>
+                          <select
+                            className={`quick-select status-select status-${getStatusClass(
+                              issue.status
+                            )}`}
+                            value={issue.status || "Open"}
+                            onChange={(event) =>
+                              updateIssueLocally(
+                                issue._id,
+                                "status",
+                                event.target.value
+                              )
+                            }
+                            aria-label={`Change status for ${issue.title}`}
+                          >
+                            {STATUSES.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+
+                        <td>{getAssignee(issue)}</td>
+
+                        <td>
+                          <div className="priority-control">
+                            <select
+                              className="priority-native-select"
+                              value={priority}
+                              onChange={(event) =>
+                                updateIssueLocally(
+                                  issue._id,
+                                  "priority",
+                                  event.target.value
+                                )
+                              }
+                              aria-label={`Change priority for ${issue.title}`}
+                            >
+                              {PRIORITIES.map((item) => (
+                                <option key={item} value={item}>
+                                  {item}
+                                </option>
+                              ))}
+                            </select>
+
+                            <span
+                              className={`priority-pill ${getPriorityClass(
+                                priority
+                              )}`}
+                              aria-hidden="true"
+                            >
+                              <span>{priority}</span>
+                            </span>
+                          </div>
+                        </td>
+
+                        <td>{formatDate(getDate(issue))}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <div className="dashboard-panels">
-          <article className="dashboard-panel">
-            <div className="panel-heading">
+        {/* SIDE PANELS */}
+        <div className="dashboard-side-panels">
+          <div className="dashboard-panel">
+            <div className="panel-head">
               <div>
-                <h3>Your projects</h3>
-                <p>Recently available workspaces</p>
+                <h3>Projects</h3>
+                <p>Progress at a glance</p>
               </div>
-              <Link to="/projects" className="panel-link" aria-label="View projects">
-                <ArrowUpRight size={19} />
+
+              <Link to="/projects" className="panel-link">
+                View <ArrowRight size={14} />
               </Link>
             </div>
 
-            {projects.length === 0 ? (
-              <div className="empty-state">
-                <FolderKanban size={28} />
+            {projectProgress.length === 0 ? (
+              <div className="panel-empty">
+                <FolderKanban size={23} />
                 <p>No projects yet.</p>
-                <Link to="/projects">Create your first project</Link>
+                <Link to="/projects">Explore projects</Link>
               </div>
             ) : (
-              projects.slice(0, 5).map((project, index) => {
-                const projectIssues = issues.filter(
-                  (issue) =>
-                    String(issue.projectId?._id || issue.projectId) ===
-                    String(project._id)
-                );
-
-                const done = projectIssues.filter(
-                  (issue) => issue.status === "Done"
-                ).length;
-
-                const percentage = projectIssues.length
-                  ? Math.round((done / projectIssues.length) * 100)
-                  : 0;
-
-                return (
+              <div className="project-list">
+                {projectProgress.slice(0, 5).map((project) => (
                   <Link
-                    className="project-summary"
                     to={`/projects/${project._id}`}
+                    className="project-row"
                     key={project._id}
                   >
-                    <div className={`summary-icon summary-icon-${index % 3}`}>
-                      <Layers3 size={19} />
+                    <div className="project-top">
+                      <span className="project-name">
+                        {project.name}
+                      </span>
+                      <span className="project-percent">
+                        {project.percent}%
+                      </span>
                     </div>
 
-                    <div className="summary-content">
-                      <strong>{project.name}</strong>
-                      <small>
-                        {projectIssues.length} issues · {percentage}% complete
-                      </small>
-                      <div className="summary-progress">
-                        <div style={{ width: `${percentage}%` }} />
-                      </div>
+                    <p className="project-desc">
+                      {project.description || "Workspace project"}
+                    </p>
+
+                    <div
+                      className="track"
+                      role="progressbar"
+                      aria-valuenow={project.percent}
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      aria-label={`${project.name} completion`}
+                    >
+                      <div
+                        className="bar"
+                        style={{ width: `${project.percent}%` }}
+                      />
                     </div>
 
-                    <ArrowUpRight size={16} className="summary-arrow" />
+                    <div className="project-meta">
+                      <span>
+                        {project.completedCount} of {project.issueCount} completed
+                      </span>
+                      <span>{project.status || "Active"}</span>
+                    </div>
                   </Link>
-                );
-              })
-            )}
-          </article>
-
-          <article className="dashboard-panel">
-            <div className="panel-heading">
-              <div>
-                <h3>Recent issues</h3>
-                <p>Latest issue updates</p>
+                ))}
               </div>
-              <Activity size={20} className="panel-cyan-icon" />
+            )}
+          </div>
+
+          {/* RECENT ACTIVITY */}
+          <div className="dashboard-panel">
+            <div className="panel-head">
+              <div>
+                <h3>Recent activity</h3>
+                <p>Latest workspace updates</p>
+              </div>
+              <Activity size={17} className="activity-heading-icon" />
             </div>
 
-            {recentIssues.length === 0 ? (
-              <div className="empty-state">
-                <CircleDot size={28} />
-                <p>No issues available.</p>
+            {recentActivity.length === 0 ? (
+              <div className="panel-empty">
+                <Activity size={22} />
+                <p>Your recent updates will appear here.</p>
               </div>
             ) : (
-              recentIssues.map((issue, index) => (
-                <div className="recent-issue" key={issue._id}>
-                  <div className={`recent-icon recent-icon-${index % 3}`}>
-                    <CircleDot size={17} />
+              <div className="activity-list">
+                {recentActivity.map((activity) => (
+                  <div className="activity-row" key={activity.id}>
+                    <span className="activity-marker">
+                      {activity.type === "project" ? (
+                        <FolderKanban size={13} />
+                      ) : (
+                        <ListTodo size={13} />
+                      )}
+                    </span>
+
+                    <div className="activity-text">
+                      <strong>{activity.title}</strong>
+                      <span>{activity.detail}</span>
+                      <span className="activity-time">
+                        {formatDate(activity.date)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="recent-content">
-                    <strong>{issue.title}</strong>
-                    <small>
-                      {issue.status || "Open"} · {issue.priority || "Medium"} priority
-                    </small>
-                  </div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
-          </article>
+          </div>
         </div>
       </section>
-
-      <div className="dashboard-bottom">
-        <span>{projects.length} projects · {totalIssues} issues</span>
-        <Link to="/projects">
-          <Button variant="secondary">Manage projects <ArrowUpRight size={15} /></Button>
-        </Link>
-      </div>
     </div>
   );
 }

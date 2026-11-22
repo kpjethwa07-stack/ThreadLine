@@ -7,7 +7,6 @@ import {
   Search,
   ClipboardList,
   Clock3,
-  CheckCircle2,
   Trash2,
   X,
   Activity,
@@ -98,6 +97,7 @@ const ProjectDetails = () => {
 
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   const [newIssue, setNewIssue] = useState({
     title: "",
@@ -192,6 +192,42 @@ const ProjectDetails = () => {
     setSuccess("");
   };
 
+  // OPEN CREATE ISSUE MODAL
+  const openCreateForm = () => {
+    clearMessages();
+    setCreateError("");
+    setShowCreateForm(true);
+  };
+
+  // CLOSE CREATE ISSUE MODAL
+  const closeCreateForm = () => {
+    if (creating) return;
+
+    setShowCreateForm(false);
+    setCreateError("");
+  };
+
+  // CLOSE MODALS WITH ESCAPE
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === "Escape") {
+        if (showCreateForm && !creating) {
+          closeCreateForm();
+        }
+
+        if (activityIssue) {
+          closeActivity();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [showCreateForm, creating, activityIssue]);
+
   // ADD PROJECT MEMBER
   const addMember = async (e) => {
     e.preventDefault();
@@ -268,17 +304,20 @@ const ProjectDetails = () => {
   const createIssue = async (e) => {
     e.preventDefault();
 
-    if (!newIssue.title.trim()) {
-      setError("Please enter an issue title.");
+    const title = newIssue.title.trim();
+
+    if (!title) {
+      setCreateError("Please enter an issue title.");
       return;
     }
 
     clearMessages();
+    setCreateError("");
     setCreating(true);
 
     try {
       await api.post("/issues", {
-        title: newIssue.title.trim(),
+        title,
         description: newIssue.description.trim(),
         priority: newIssue.priority,
         projectId: id,
@@ -297,7 +336,7 @@ const ProjectDetails = () => {
     } catch (err) {
       console.error("Create issue failed:", err);
 
-      setError(
+      setCreateError(
         err.response?.data?.message ||
           "Unable to create issue."
       );
@@ -569,19 +608,14 @@ const ProjectDetails = () => {
             </span>
           </div>
 
-          <Button
-            onClick={() => {
-              clearMessages();
-              setShowCreateForm((prev) => !prev);
-            }}
-          >
+          <Button onClick={openCreateForm}>
             <Plus size={16} />
             New Issue
           </Button>
         </div>
       </section>
 
-      {/* ERROR / SUCCESS */}
+      {/* ERROR */}
       {error && (
         <div className="pd-error">
           <div
@@ -610,6 +644,7 @@ const ProjectDetails = () => {
         </div>
       )}
 
+      {/* SUCCESS */}
       {success && (
         <div
           className="pd-error"
@@ -812,92 +847,6 @@ const ProjectDetails = () => {
         </div>
       </section>
 
-      {/* CREATE ISSUE */}
-      {showCreateForm && (
-        <section className="pd-create-panel">
-          <div className="pd-panel-heading">
-            <div>
-              <h3>Create new issue</h3>
-              <p>Add a task or problem to this project.</p>
-            </div>
-
-            <button
-              type="button"
-              className="pd-close"
-              onClick={() => setShowCreateForm(false)}
-              aria-label="Close form"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          <form className="pd-create-form" onSubmit={createIssue}>
-            <label>
-              Issue title
-
-              <Input
-                value={newIssue.title}
-                onChange={(e) =>
-                  setNewIssue((prev) => ({
-                    ...prev,
-                    title: e.target.value,
-                  }))
-                }
-                placeholder="What needs to be done?"
-                required
-              />
-            </label>
-
-            <label>
-              Description
-
-              <textarea
-                className="pd-textarea"
-                value={newIssue.description}
-                onChange={(e) =>
-                  setNewIssue((prev) => ({
-                    ...prev,
-                    description: e.target.value,
-                  }))
-                }
-                placeholder="Add issue details..."
-                rows={4}
-              />
-            </label>
-
-            <label>
-              Priority
-
-              <select
-                value={newIssue.priority}
-                onChange={(e) =>
-                  setNewIssue((prev) => ({
-                    ...prev,
-                    priority: e.target.value,
-                  }))
-                }
-              >
-                {PRIORITY_OPTIONS.map((priority) => (
-                  <option key={priority} value={priority}>
-                    {priority}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="pd-form-actions">
-              <Button type="button" onClick={() => setShowCreateForm(false)}>
-                Cancel
-              </Button>
-
-              <Button type="submit" disabled={creating}>
-                {creating ? "Creating..." : "Create Issue"}
-              </Button>
-            </div>
-          </form>
-        </section>
-      )}
-
       {/* ISSUES SECTION */}
       <section className="pd-issues-section">
         <div className="pd-issues-heading">
@@ -972,7 +921,7 @@ const ProjectDetails = () => {
               </p>
 
               {issues.length === 0 && (
-                <Button onClick={() => setShowCreateForm(true)}>
+                <Button onClick={openCreateForm}>
                   <Plus size={16} />
                   Create Issue
                 </Button>
@@ -1043,7 +992,6 @@ const ProjectDetails = () => {
 
                 {/* ISSUE CONTROLS */}
                 <div className="pd-issue-controls">
-                  {/* STATUS */}
                   <select
                     aria-label="Issue status"
                     value={issue.status || "Open"}
@@ -1058,7 +1006,6 @@ const ProjectDetails = () => {
                     ))}
                   </select>
 
-                  {/* PRIORITY */}
                   <select
                     aria-label="Issue priority"
                     value={issue.priority || "Medium"}
@@ -1073,7 +1020,6 @@ const ProjectDetails = () => {
                     ))}
                   </select>
 
-                  {/* ASSIGNEE: PROJECT OWNER + MEMBERS ONLY */}
                   <select
                     aria-label="Assign issue"
                     value={getId(issue.assignee)}
@@ -1092,7 +1038,6 @@ const ProjectDetails = () => {
                     ))}
                   </select>
 
-                  {/* ACTIVITY */}
                   <button
                     type="button"
                     title="View activity"
@@ -1102,7 +1047,6 @@ const ProjectDetails = () => {
                     <Activity size={16} />
                   </button>
 
-                  {/* DELETE */}
                   <button
                     type="button"
                     title="Delete issue"
@@ -1117,6 +1061,144 @@ const ProjectDetails = () => {
           )}
         </div>
       </section>
+
+      {/* CREATE ISSUE MODAL */}
+      {showCreateForm && (
+        <div
+          className="pd-create-overlay"
+          onClick={closeCreateForm}
+        >
+          <section
+            className="pd-create-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pd-create-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pd-create-modal-header">
+              <div>
+                <span className="pd-modal-eyebrow">
+                  PROJECT WORKSPACE
+                </span>
+
+                <h2 id="pd-create-title">Create new issue</h2>
+
+                <p>
+                  Add a task or problem to this project.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="pd-create-close"
+                onClick={closeCreateForm}
+                disabled={creating}
+                aria-label="Close create issue form"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form
+              className="pd-create-modal-form"
+              onSubmit={createIssue}
+            >
+              {createError && (
+                <div className="pd-create-form-error">
+                  {createError}
+                </div>
+              )}
+
+              <div className="pd-create-field">
+                <label htmlFor="pd-issue-title">
+                  Issue title <span>*</span>
+                </label>
+
+                <Input
+                  id="pd-issue-title"
+                  value={newIssue.title}
+                  onChange={(e) =>
+                    setNewIssue((prev) => ({
+                      ...prev,
+                      title: e.target.value,
+                    }))
+                  }
+                  placeholder="What needs to be done?"
+                  required
+                />
+              </div>
+
+              <div className="pd-create-field">
+                <label htmlFor="pd-issue-description">
+                  Description
+                </label>
+
+                <textarea
+                  id="pd-issue-description"
+                  className="pd-create-description"
+                  value={newIssue.description}
+                  onChange={(e) =>
+                    setNewIssue((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Describe the issue, expected behavior, or steps to reproduce..."
+                  rows={5}
+                />
+              </div>
+
+              <div className="pd-create-field">
+                <label htmlFor="pd-issue-priority">
+                  Priority
+                </label>
+
+                <select
+                  id="pd-issue-priority"
+                  className="pd-create-priority"
+                  value={newIssue.priority}
+                  onChange={(e) =>
+                    setNewIssue((prev) => ({
+                      ...prev,
+                      priority: e.target.value,
+                    }))
+                  }
+                >
+                  {PRIORITY_OPTIONS.map((priority) => (
+                    <option key={priority} value={priority}>
+                      {priority}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pd-create-modal-actions">
+                <Button
+                  type="button"
+                  onClick={closeCreateForm}
+                  disabled={creating}
+                >
+                  Cancel
+                </Button>
+
+                <Button type="submit" disabled={creating}>
+                  {creating ? (
+                    <>
+                      <RefreshCw size={15} className="pd-spinner" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} />
+                      Create Issue
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       {/* ACTIVITY MODAL */}
       {activityIssue && (
